@@ -291,6 +291,7 @@
   }
 </style>
 <meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="yandex-verification" content="4ac2145c59e96c91">
 <link rel="canonical" href="https://neobazanastimircik-droid.github.io/my-dota/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="My Dota">
@@ -922,6 +923,10 @@
   var statusEl = document.getElementById("me-status");
   var out = document.getElementById("me-out");
   var KEY = "mydota.steam";
+  var VALVE_PROXY = "";
+  try {
+    VALVE_PROXY = document.documentElement.getAttribute("data-valve-proxy") || "";
+  } catch (e) { VALVE_PROXY = ""; }
 
   var RANKS = ["", "Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Владыка", "Божество", "Титан"];
 
@@ -1031,6 +1036,73 @@
     out.hidden = false;
   }
 
+  function renderValve(data){
+    var p = data.player || {};
+    var m = data.matches;
+    var nums = "";
+    if (m && m.total) {
+      nums = "<div class=\"me-nums\">" +
+        "<div class=\"me-num\"><div class=\"k\">Матчей подряд</div><div class=\"v\">" + m.total + "</div></div>" +
+        "<div class=\"me-num\"><div class=\"k\">Винрейт</div><div class=\"v\">" + pct(m.win, m.total) + "</div></div>" +
+        "<div class=\"me-num\"><div class=\"k\">Победы</div><div class=\"v\">" + m.win + "</div></div>" +
+        "<div class=\"me-num\"><div class=\"k\">Поражения</div><div class=\"v\">" + m.lose + "</div></div>" +
+        "</div>";
+    }
+    var heroesHtml = ((m && m.heroes) || []).map(function(h){
+      return "<div class=\"me-hero\"><span class=\"hn\">" + esc(h.name) + "</span>" +
+        "<span class=\"hv\">" + pct(h.win, h.games) + "</span>" +
+        "<span class=\"hg\">" + h.games + "</span></div>";
+    }).join("");
+
+    out.innerHTML =
+      "<div class=\"me-card\">" +
+        (p.avatar ? "<img class=\"me-ava\" src=\"" + esc(p.avatar) + "\" alt=\"\" loading=\"lazy\" referrerpolicy=\"no-referrer\">" : "") +
+        "<div class=\"me-who\"><div class=\"me-name\">" + esc(p.name || ("аккаунт " + p.account_id)) + "</div>" +
+        "<div class=\"me-sub\">SteamID " + esc(p.steamid) + " · данные Steam Web API</div></div>" +
+      "</div>" +
+      nums +
+      (heroesHtml ? "<div class=\"me-heroes\">" + heroesHtml + "</div>" : "") +
+      "<div class=\"me-links\">" +
+        "<a href=\"" + esc(p.profile || "#") + "\" target=\"_blank\" rel=\"noopener nofollow\">Профиль Steam</a>" +
+        "<a href=\"https://www.dotabuff.com/players/" + p.account_id + "\" target=\"_blank\" rel=\"noopener nofollow\">Dotabuff</a>" +
+        "<a href=\"https://www.opendota.com/players/" + p.account_id + "\" target=\"_blank\" rel=\"noopener nofollow\">OpenDota</a>" +
+      "</div>";
+
+    out.hidden = false;
+  }
+
+  function valveRun(raw, target, remember){
+    var q = (target.id != null && target.id > 0) ? String(target.id) : target.q;
+    var glue = VALVE_PROXY.indexOf("?") >= 0 ? "&" : "?";
+
+    setStatus("Загружаю данные из Steam…");
+    fetch(VALVE_PROXY + glue + "q=" + encodeURIComponent(q), { mode: "cors" })
+      .then(function(r){
+        return r.json().then(function(j){
+          if (!r.ok) throw new Error((j && (j.error || j.detail)) || ("HTTP " + r.status));
+          return j;
+        });
+      })
+      .then(function(data){
+        if (!data || data.ok !== true) throw new Error("NO_DATA");
+        renderValve(data);
+        clearBtn.hidden = false;
+        if (data.matches) setStatus("Источник: Steam Web API (Valve).");
+        else setStatus("Профиль Steam получен, но матчи скрыты: в Dota 2 выключен «Публичный профиль».", true);
+        if (remember !== false) {
+          try { localStorage.setItem(KEY, String(raw).trim()); } catch (e) {}
+        }
+      })
+      .catch(function(err){
+        var msg = String((err && err.message) || err);
+        if (msg === "NOTFOUND") setStatus("Такой ник не нашёлся в Steam. Проверь написание или вставь SteamID.", true);
+        else if (msg === "no_key") setStatus("На прокси не задан STEAM_KEY — вставь ключ Steam Web API в переменные воркера.", true);
+        else setStatus("Steam не ответил (" + msg + ").", true);
+        out.hidden = true;
+      })
+      .then(function(){ submit.disabled = false; });
+  }
+
   function run(raw, remember){
     var target = parseTarget(raw);
     if (!target) {
@@ -1042,9 +1114,15 @@
       return;
     }
 
-    setStatus("Загружаю данные из OpenDota…");
     out.hidden = true;
     submit.disabled = true;
+
+    if (VALVE_PROXY) {
+      valveRun(raw, target, remember);
+      return;
+    }
+
+    setStatus("Загружаю данные из OpenDota…");
 
     Promise.all([resolveId(target), heroNames()]).then(function(pre){
       var id = pre[0];
